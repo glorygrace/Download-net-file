@@ -1,302 +1,109 @@
-name: Upload File to Wenshushu
+
+name: download-net-file
 
 on:
+  repository_dispatch:
   workflow_dispatch:
     inputs:
       file_url:
-        description: '文件URL地址'
+        description: '文件地址'
         required: true
-        type: string
-      custom_name:
-        description: '自定义文件名（可选）'
-        required: false
-        type: string
-      days:
-        description: '有效期（天，默认7）'
-        required: false
-        type: number
-        default: 7
+      
+
+env:
+  UPLOAD_COWTRANSFER: false
+  UPLOAD_WETRANSFER: true
+  UPLOAD_GOFILE: false
+  UPLOAD_WENSHUSHU: true
+  UPLOAD_RELEASE: false
+  TZ: Asia/Shanghai
 
 jobs:
-  upload:
-    runs-on: ubuntu-latest
-    
+  build:
+    runs-on: ubuntu-22.04
+
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
-      
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Install dependencies
-      run: |
-        pip install requests
-        
-    - name: Create upload script
-      run: |
-        cat > upload_script.py << 'EOF'
-#!/usr/bin/env python3
-"""
-文叔叔文件上传脚本
-需要设置 WENSHUSHU_COOKIE 环境变量
-"""
+      uses: actions/checkout@main
 
-import requests
-import os
-import sys
-import time
-import json
-from urllib.parse import urlparse
-
-class WenshushuUploader:
-    def __init__(self, cookie):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-            'Origin': 'https://www.wenshushu.cn',
-            'Referer': 'https://www.wenshushu.cn/',
-            'Cookie': cookie
-        })
-        self.base_url = 'https://www.wenshushu.cn/ap'
-        
-    def check_login(self):
-        """检查登录状态"""
-        try:
-            url = f"{self.base_url}/user/info"
-            response = self.session.get(url, timeout=10)
-            data = response.json()
-            if data.get('code') == 0:
-                print(f"✅ 登录成功，用户名: {data.get('data', {}).get('nickname', '未知')}")
-                return True
-            else:
-                print(f"❌ 登录失败: {data.get('msg')}")
-                return False
-        except Exception as e:
-            print(f"❌ 检查登录状态失败: {e}")
-            return False
-    
-    def download_file(self, file_url, save_path):
-        """下载文件"""
-        try:
-            print(f"📥 开始下载: {file_url}")
-            response = requests.get(file_url, stream=True, timeout=30)
-            response.raise_for_status()
-            
-            # 获取文件名
-            content_disposition = response.headers.get('content-disposition', '')
-            if 'filename=' in content_disposition:
-                filename = content_disposition.split('filename=')[1].strip('"\'')
-            else:
-                filename = os.path.basename(urlparse(file_url).path) or f'file_{int(time.time())}.bin'
-            
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(save_path, 'wb') as f:
-                downloaded = 0
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0:
-                            percent = (downloaded / total_size) * 100
-                            sys.stdout.write(f"\r下载进度: {percent:.1f}% ({downloaded}/{total_size} bytes)")
-                            sys.stdout.flush()
-            
-            print(f"\n✅ 下载完成: {save_path}")
-            file_size = os.path.getsize(save_path)
-            print(f"📊 文件大小: {self.format_size(file_size)}")
-            return filename, file_size
-            
-        except Exception as e:
-            print(f"❌ 下载失败: {e}")
-            return None, 0
-    
-    def upload_file(self, file_path, filename, expire_days=7):
-        """上传文件到文叔叔"""
-        try:
-            print(f"🚀 开始上传文件: {filename}")
-            
-            # 步骤1: 获取上传参数
-            init_url = f"{self.base_url}/upload/init"
-            init_data = {
-                "name": filename,
-                "size": os.path.getsize(file_path),
-                "expire": expire_days * 86400,
-                "pwd": "",
-                "up_type": "file"
-            }
-            
-            print("🔧 初始化上传...")
-            response = self.session.post(init_url, json=init_data)
-            data = response.json()
-            
-            if data.get('code') != 0:
-                print(f"❌ 初始化失败: {data}")
-                return None
-            
-            upload_info = data['data']
-            upload_url = upload_info['url']
-            upload_key = upload_info['key']
-            
-            # 步骤2: 上传文件到存储服务
-            print("📤 上传文件中...")
-            with open(file_path, 'rb') as f:
-                upload_response = requests.put(
-                    upload_url,
-                    data=f,
-                    headers={
-                        'Content-Type': 'application/octet-stream',
-                        'Content-Length': str(os.path.getsize(file_path))
-                    }
-                )
-            
-            if upload_response.status_code not in [200, 201, 204]:
-                print(f"❌ 上传文件失败: {upload_response.status_code}")
-                return None
-            
-            # 步骤3: 完成上传
-            print("🔨 完成上传流程...")
-            complete_url = f"{self.base_url}/upload/complete"
-            complete_data = {
-                "key": upload_key,
-                "fname": filename,
-                "fsize": upload_info['fsize']
-            }
-            
-            complete_response = self.session.post(complete_url, json=complete_data)
-            complete_data = complete_response.json()
-            
-            if complete_data.get('code') != 0:
-                print(f"❌ 完成上传失败: {complete_data}")
-                return None
-            
-            # 获取分享链接
-            file_info = complete_data['data']['file']
-            file_code = file_info['code']
-            download_url = f"https://www.wenshushu.cn/f/{file_code}"
-            
-            print(f"✅ 上传成功!")
-            print(f"📎 文件名称: {filename}")
-            print(f"🔗 下载链接: {download_url}")
-            print(f"🔑 提取码: {file_info.get('tk', '无')}")
-            print(f"📅 有效期: {expire_days}天")
-            
-            return {
-                'download_url': download_url,
-                'file_code': file_code,
-                'file_name': filename,
-                'expire_days': expire_days
-            }
-            
-        except Exception as e:
-            print(f"❌ 上传过程失败: {e}")
-            return None
-    
-    def format_size(self, size_bytes):
-        """格式化文件大小"""
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if size_bytes < 1024.0:
-                return f"{size_bytes:.2f} {unit}"
-            size_bytes /= 1024.0
-        return f"{size_bytes:.2f} PB"
-
-def main():
-    # 获取环境变量
-    file_url = os.getenv('INPUT_FILE_URL')
-    cookie = os.getenv('WENSHUSHU_COOKIE')
-    custom_name = os.getenv('INPUT_CUSTOM_NAME')
-    days = int(os.getenv('INPUT_DAYS', '7'))
-    
-    if not file_url:
-        print("❌ 错误: 请提供文件URL")
-        sys.exit(1)
-    
-    if not cookie:
-        print("❌ 错误: 请设置WENSHUSHU_COOKIE环境变量")
-        sys.exit(1)
-    
-    # 创建上传器实例
-    uploader = WenshushuUploader(cookie)
-    
-    # 检查登录状态
-    if not uploader.check_login():
-        print("❌ 登录状态无效，请检查cookie")
-        sys.exit(1)
-    
-    # 临时文件路径
-    temp_dir = '/tmp/wenshushu_upload'
-    os.makedirs(temp_dir, exist_ok=True)
-    temp_file = os.path.join(temp_dir, f'temp_{int(time.time())}')
-    
-    try:
-        # 下载文件
-        original_name, file_size = uploader.download_file(file_url, temp_file)
-        if not original_name:
-            sys.exit(1)
-        
-        # 使用自定义名称或原始名称
-        filename = custom_name if custom_name else original_name
-        
-        # 上传文件
-        result = uploader.upload_file(temp_file, filename, days)
-        if result:
-            # 输出结果供GitHub Actions使用
-            print(f"::set-output name=download_url::{result['download_url']}")
-            print(f"::set-output name=file_code::{result['file_code']}")
-            print(f"::set-output name=file_name::{result['file_name']}")
-            print(f"::set-output name=expire_days::{result['expire_days']}")
-            
-            # 保存结果到文件
-            with open('upload_result.json', 'w') as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
-        else:
-            sys.exit(1)
-            
-    finally:
-        # 清理临时文件
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
-    
-    print("🎉 文件上传流程完成")
-
-if __name__ == '__main__':
-    main()
-EOF
-        
-    - name: Run upload script
-      id: upload
+    - name: Initialization environment
       env:
-        WENSHUSHU_COOKIE: ${{ secrets.WENSHUSHU_COOKIE }}
-        INPUT_FILE_URL: ${{ github.event.inputs.file_url }}
-        INPUT_CUSTOM_NAME: ${{ github.event.inputs.custom_name }}
-        INPUT_DAYS: ${{ github.event.inputs.days }}
+        DEBIAN_FRONTEND: noninteractive
       run: |
-        python upload_script.py
-        
-    - name: Show result
+        #sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        #sudo -E apt-get -qq update
+        #sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2004)
+       
+        #sudo -E apt-get -qq autoremove --purge
+        #sudo -E apt-get -qq clean
+        #sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Make dir download
+      working-directory: /workdir
       run: |
-        echo "✅ 上传成功！"
-        echo "📎 文件名称: ${{ steps.upload.outputs.file_name }}"
-        echo "🔗 下载链接: ${{ steps.upload.outputs.download_url }}"
-        echo "📅 有效期: ${{ steps.upload.outputs.expire_days }}天"
+        df -hT $PWD
+        mkdir download
+        ln -sf /workdir/download $GITHUB_WORKSPACE/download
         
-    - name: Upload result artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: upload-result
-        path: upload_result.json
-        
-    - name: Create summary
+    - name: Download files
+      id: download
       run: |
-        echo "## 📤 文叔叔文件上传结果" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✅ **状态**: 上传成功" >> $GITHUB_STEP_SUMMARY
-        echo "📎 **文件**: ${{ steps.upload.outputs.file_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "🔗 **链接**: [${{ steps.upload.outputs.download_url }}](${{ steps.upload.outputs.download_url }})" >> $GITHUB_STEP_SUMMARY
-        echo "📅 **有效期**: ${{ steps.upload.outputs.expire_days }}天" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "⏰ **上传时间**: $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
+        cd download
+        file_url="${{ github.event.inputs.file_url }}"
+        curl -OfsSL $file_url
+        # echo "::set-output name=status::success"
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Organize files
+      id: organize
+      if: steps.download.outputs.status == 'success' && !cancelled()
+      run: |
+        cd download
+        t=file_$(date +%Y%m%d%H%M%S).tar.gz
+        echo "FILE_NAME=$t" >> $GITHUB_ENV
+        tar -zcvf $t *
+        # echo "::set-output name=status::success"
+        echo "status=success" >> $GITHUB_OUTPUT
+               
+    - name: Upload firmware to WeTransfer
+      id: wetransfer
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      run: |
+        # cd /workdir
+        pwd
+        cd download
+        pwd
+        ls
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer wet -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wetransfer.log
+        # echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"      
+        echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+        # echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+            
+    - name: Upload firmware to GoFile
+      id: Gofile
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_GOFILE == 'true' && !cancelled()
+      run: |
+        # cd /workdir
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer gof -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee gofile.log
+        echo "::warning file=gofile.io::$(cat gofile.log | grep https)"      
+        echo "url=$(cat gofile.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
+        
+    - name: Upload firmware to WenShuShu
+      id: WenShuShu
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
+      # working-directory: /workdir
+      run: |
+        pwd
+        cd download
+        pwd
+        ls
+        curl -fsSL git.io/file-transfer | sh
+        ./transfer wss -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wenshushu.log
+        # echo "::warning file=wenshushu.cn::$(cat wenshushu.log | grep https)" 
+        echo "::set-output name=url::$(cat wenshushu.log | grep https | cut -f3 -d" ")"
+        
+    
