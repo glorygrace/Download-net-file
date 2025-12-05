@@ -1,0 +1,225 @@
+name: Upload to Wenshushu
+
+on:
+  workflow_dispatch:  # 手动触发
+    inputs:
+      file_url:
+        description: '要上传的文件URL'
+        required: true
+        type: string
+      file_name:
+        description: '保存的文件名（可选）'
+        required: false
+        type: string
+      expiration:
+        description: '文件有效期（天，默认7天）'
+        required: false
+        type: number
+        default: 7
+  # 也可以配置为自动触发，例如：
+  # push:
+  #   branches: [ main ]
+  # schedule:
+  #   - cron: '0 0 * * *'  # 每天UTC 0点运行
+
+jobs:
+  upload-file:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+    
+    - name: Download and upload to Wenshushu
+      id: upload
+      env:
+        WENSHUSHU_TOKEN: ${{ secrets.WENSHUSHU_TOKEN }}
+        FILE_URL: ${{ github.event.inputs.file_url }}
+        FILE_NAME: ${{ github.event.inputs.file_name }}
+        EXPIRATION_DAYS: ${{ github.event.inputs.expiration }}
+      run: |
+        echo "Downloading file from: $FILE_URL"
+        
+        # Python脚本下载并上传
+        python -c "
+import requests
+import os
+import sys
+import time
+import mimetypes
+
+# 从环境变量获取参数
+file_url = os.getenv('FILE_URL')
+file_name = os.getenv('FILE_NAME')
+expiration_days = int(os.getenv('EXPIRATION_DAYS', 7))
+token = os.getenv('WENSHUSHU_TOKEN')
+
+if not token:
+    print('❌ 错误：请设置WENSHUSHU_TOKEN secret')
+    sys.exit(1)
+
+if not file_url:
+    print('❌ 错误：请提供文件URL')
+    sys.exit(1)
+
+# 下载文件
+try:
+    print(f'📥 正在下载: {file_url}')
+    response = requests.get(file_url, stream=True, timeout=30)
+    response.raise_for_status()
+    
+    # 如果没有提供文件名，从URL或响应头中提取
+    if not file_name:
+        # 尝试从Content-Disposition头获取文件名
+        content_disposition = response.headers.get('Content-Disposition', '')
+        if 'filename=' in content_disposition:
+            import re
+            filename_match = re.search(r'filename=[\"\']?([^\"\'\s]+)[\"\']?', content_disposition)
+            if filename_match:
+                file_name = filename_match.group(1)
+        # 从URL提取
+        if not file_name:
+            file_name = file_url.split('/')[-1].split('?')[0]
+            if not file_name or '.' not in file_name:
+                file_name = f'downloaded_file_{int(time.time())}.bin'
+    
+    # 保存临时文件
+    temp_file = f'/tmp/{file_name}'
+    with open(temp_file, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+    
+    file_size = os.path.getsize(temp_file)
+    print(f'✅ 下载完成: {file_name} ({file_size} bytes)')
+    
+    # 上传到文叔叔
+    print('🚀 正在上传到文叔叔...')
+    
+    # 步骤1: 获取上传链接和token
+    init_url = 'https://www.wenshushu.cn/ap/upload/init'
+    headers = {
+        'Accept': 'application/json, text/plain, */*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.wenshushu.cn/',
+        'x-token': token
+    }
+    
+    # 获取文件MIME类型
+    mime_type, _ = mimetypes.guess_type(file_name)
+    if not mime_type:
+        mime_type = 'application/octet-stream'
+    
+    init_data = {
+        'name': file_name,
+        'size': file_size,
+        'type': mime_type,
+        'expire': expiration_days * 86400,  # 转换为秒
+        'pwd': '',
+        'up_type': 'file'
+    }
+    
+    init_response = requests.post(init_url, headers=headers, json=init_data)
+    init_result = init_response.json()
+    
+    if init_result.get('code') != 0:
+        print(f'❌ 初始化失败: {init_result}')
+        sys.exit(1)
+    
+    upload_data = init_result['data']
+    upload_url = upload_data['url']
+    upload_key = upload_data['key']
+    fsize = upload_data['fsize']
+    
+    # 步骤2: 上传文件
+    print(f'📤 上传到: {upload_url}')
+    
+    with open(temp_file, 'rb') as f:
+        upload_response = requests.put(
+            upload_url,
+            data=f,
+            headers={
+                'Content-Type': mime_type,
+                'Content-Length': str(file_size)
+            }
+        )
+    
+    if upload_response.status_code not in [200, 201, 204]:
+        print(f'❌ 上传失败: {upload_response.status_code}')
+        print(upload_response.text)
+        sys.exit(1)
+    
+    # 步骤3: 完成上传
+    complete_url = 'https://www.wenshushu.cn/ap/upload/complete'
+    complete_data = {
+        'key': upload_key,
+        'fname': file_name,
+        'fsize': fsize
+    }
+    
+    complete_response = requests.post(complete_url, headers=headers, json=complete_data)
+    complete_result = complete_response.json()
+    
+    if complete_result.get('code') != 0:
+        print(f'❌ 完成上传失败: {complete_result}')
+        sys.exit(1)
+    
+    # 获取下载链接
+    file_data = complete_result['data']['file']
+    file_code = file_data['code']
+    download_url = f'https://www.wenshushu.cn/f/{file_code}'
+    
+    print(f'✅ 上传成功！')
+    print(f'📎 文件名称: {file_name}')
+    print(f'🔗 下载链接: {download_url}')
+    print(f'📅 有效期: {expiration_days}天')
+    
+    # 输出到GitHub Actions
+    print('::set-output name=download_url::' + download_url)
+    print('::set-output name=file_code::' + file_code)
+    print('::set-output name=file_name::' + file_name)
+    
+    # 清理临时文件
+    os.remove(temp_file)
+    
+except Exception as e:
+    print(f'❌ 错误: {str(e)}')
+    sys.exit(1)
+"
+    
+    - name: Upload summary
+      run: |
+        echo "✅ 文件上传完成"
+        echo "下载链接: ${{ steps.upload.outputs.download_url }}"
+        echo "文件代码: ${{ steps.upload.outputs.file_code }}"
+        echo "文件名称: ${{ steps.upload.outputs.file_name }}"
+    
+    - name: Create issue with upload result (可选)
+      if: success()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { repo, owner } = context.repo;
+          const downloadUrl = '${{ steps.upload.outputs.download_url }}';
+          const fileName = '${{ steps.upload.outputs.file_name }}';
+          
+          github.rest.issues.create({
+            owner: owner,
+            repo: repo,
+            title: `📤 文件上传完成: ${fileName}`,
+            body: `文件已成功上传到文叔叔\n\n` +
+                  `**文件名称:** ${fileName}\n` +
+                  `**下载链接:** ${downloadUrl}\n` +
+                  `**上传时间:** ${new Date().toISOString()}\n\n` +
+                  `此文件有效期为 ${{ github.event.inputs.expiration || 7 }} 天`
+          });
