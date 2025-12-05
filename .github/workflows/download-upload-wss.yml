@@ -1,4 +1,3 @@
-
 name: Upload File to Wenshushu
 
 on:
@@ -8,7 +7,6 @@ on:
       file_url:
         description: '文件地址'
         required: true
-      
 
 env:
   UPLOAD_COWTRANSFER: false
@@ -24,86 +22,117 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@main
+      uses: actions/checkout@v3
 
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        #sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        #sudo -E apt-get -qq update
-        #sudo -E apt-get -qq install $(curl -fsSL git.io/depends-ubuntu-2004)
-       
-        #sudo -E apt-get -qq autoremove --purge
-        #sudo -E apt-get -qq clean
-        #sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Make dir download
-      working-directory: /workdir
+    - name: Make download directory
       run: |
-        df -hT $PWD
-        mkdir download
+        mkdir -p /workdir/download
         ln -sf /workdir/download $GITHUB_WORKSPACE/download
-        
+
     - name: Download files
       id: download
       run: |
-        cd download
+        cd /workdir/download
         file_url="${{ github.event.inputs.file_url }}"
-        curl -OfsSL $file_url
-        # echo "::set-output name=status::success"
-        echo "status=success" >> $GITHUB_OUTPUT
+        # 添加文件名提取和验证
+        filename=$(basename "$file_url")
+        echo "下载文件: $filename"
+        curl -L -O -f "$file_url" || curl -L -o "$filename" "$file_url"
+        # 检查文件是否下载成功
+        if [ -f "$filename" ]; then
+          echo "status=success" >> $GITHUB_OUTPUT
+          echo "filename=$filename" >> $GITHUB_OUTPUT
+        else
+          echo "status=failed" >> $GITHUB_OUTPUT
+          echo "错误：文件下载失败"
+          exit 1
+        fi
 
     - name: Organize files
       id: organize
       if: steps.download.outputs.status == 'success' && !cancelled()
       run: |
-        cd download
+        cd /workdir/download
+        # 检查目录中是否有文件
+        if [ -z "$(ls -A)" ]; then
+          echo "错误：下载目录为空"
+          exit 1
+        fi
         t=file_$(date +%Y%m%d%H%M%S).tar.gz
         echo "FILE_NAME=$t" >> $GITHUB_ENV
-        tar -zcvf $t *
-        # echo "::set-output name=status::success"
+        tar -zcvf "$t" *
         echo "status=success" >> $GITHUB_OUTPUT
-               
+        echo "压缩文件: $t 创建成功"
+
     - name: Upload firmware to WeTransfer
       id: wetransfer
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
-        # cd /workdir
-        pwd
-        cd download
-        pwd
-        ls
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer wet -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wetransfer.log
-        # echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"      
-        echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        # echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
-            
+        cd /workdir/download
+        # 安装必要的工具
+        sudo apt-get update && sudo apt-get install -y curl
+        curl -fsSL https://git.io/file-transfer | sh
+        ./transfer wet -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee wetransfer.log
+        # 提取URL
+        url=$(grep -o 'https://[^ ]*' wetransfer.log | head -1 || true)
+        if [ -n "$url" ]; then
+          echo "url=$url" >> $GITHUB_OUTPUT
+          echo "::notice::WeTransfer上传成功: $url"
+        else
+          echo "::error::WeTransfer上传失败，请检查日志"
+          exit 1
+        fi
+
     - name: Upload firmware to GoFile
-      id: Gofile
+      id: gofile
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_GOFILE == 'true' && !cancelled()
       run: |
-        # cd /workdir
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer gof -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee gofile.log
-        echo "::warning file=gofile.io::$(cat gofile.log | grep https)"      
-        echo "url=$(cat gofile.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        
+        cd /workdir/download
+        curl -fsSL https://git.io/file-transfer | sh
+        ./transfer gof -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee gofile.log
+        url=$(grep -o 'https://[^ ]*' gofile.log | head -1 || true)
+        if [ -n "$url" ]; then
+          echo "url=$url" >> $GITHUB_OUTPUT
+          echo "::notice::GoFile上传成功: $url"
+        else
+          echo "::error::GoFile上传失败，请检查日志"
+          exit 1
+        fi
+
     - name: Upload firmware to WenShuShu
-      id: WenShuShu
+      id: wenshushu
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
-      # working-directory: /workdir
       run: |
-        pwd
-        cd download
-        pwd
-        ls
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer wss -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wenshushu.log
-        # echo "::warning file=wenshushu.cn::$(cat wenshushu.log | grep https)" 
-        echo "::set-output name=url::$(cat wenshushu.log | grep https | cut -f3 -d" ")"
-        
-    
+        cd /workdir/download
+        curl -fsSL https://git.io/file-transfer | sh
+        ./transfer wss -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee wenshushu.log
+        url=$(grep -o 'https://[^ ]*' wenshushu.log | head -1 || true)
+        if [ -n "$url" ]; then
+          echo "url=$url" >> $GITHUB_OUTPUT
+          echo "::notice::文叔叔上传成功: $url"
+        else
+          echo "::error::文叔叔上传失败，请检查日志"
+          exit 1
+        fi
+
+    - name: Show upload results
+      if: always()
+      run: |
+        echo "=== 上传结果 ==="
+        echo "压缩文件: ${{ env.FILE_NAME }}"
+        if [ "${{ steps.wetransfer.outputs.url }}" != "" ]; then
+          echo "WeTransfer: ${{ steps.wetransfer.outputs.url }}"
+        fi
+        if [ "${{ steps.gofile.outputs.url }}" != "" ]; then
+          echo "GoFile: ${{ steps.gofile.outputs.url }}"
+        fi
+        if [ "${{ steps.wenshushu.outputs.url }}" != "" ]; then
+          echo "文叔叔: ${{ steps.wenshushu.outputs.url }}"
+        fi
