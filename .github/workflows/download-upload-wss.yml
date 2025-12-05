@@ -1,94 +1,44 @@
-name: Upload to Wenshushu
+name: Upload URL to WeTransfer
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch: # 手动触发工作流
     inputs:
       file_url:
-        description: '要上传的文件URL'
+        description: 'The URL of the file to upload'
         required: true
-        type: string
-      file_name:
-        description: '保存的文件名（可选）'
-        required: false
-        type: string
 
 jobs:
-  upload-to-wenshushu:
+  upload:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: 下载文件
-      run: |
-        # 从输入的URL下载文件
-        if [ -z "${{ github.event.inputs.file_name }}" ]; then
-          FILENAME=$(basename "${{ github.event.inputs.file_url }}")
-        else
-          FILENAME="${{ github.event.inputs.file_name }}"
-        fi
-        echo "下载文件: ${{ github.event.inputs.file_url }}"
-        curl -L -o "${FILENAME}" "${{ github.event.inputs.file_url }}"
-        echo "文件已保存为: ${FILENAME}"
-        
-        # 检查文件大小
-        FILESIZE=$(stat -f%z "${FILENAME}" 2>/dev/null || stat -c%s "${FILENAME}")
-        echo "文件大小: ${FILESIZE} bytes"
-        
-        # 保存文件名到环境变量
-        echo "FILENAME=${FILENAME}" >> $GITHUB_ENV
-        
-    - name: 获取文叔叔上传令牌
-      env:
-        WENSHUSHU_TOKEN: ${{ secrets.WENSHUSHU_TOKEN }}
-      run: |
-        # 文叔叔API获取上传令牌
-        RESPONSE=$(curl -s -X POST "https://www.wenshushu.cn/ap/u/upload/token" \
-          -H "Content-Type: application/json" \
-          -d "{\"token\":\"${WENSHUSHU_TOKEN}\",\"channel\":\"open_platform\"}")
-        
-        echo "API响应: ${RESPONSE}"
-        
-        # 提取上传URL和参数
-        UPLOAD_URL=$(echo "${RESPONSE}" | jq -r '.data.uptoken.upurl')
-        AUTH_TOKEN=$(echo "${RESPONSE}" | jq -r '.data.uptoken.auth')
-        KEY=$(echo "${RESPONSE}" | jq -r '.data.uptoken.key')
-        
-        echo "上传URL: ${UPLOAD_URL}"
-        echo "上传密钥: ${KEY}"
-        
-        # 保存到环境变量
-        echo "UPLOAD_URL=${UPLOAD_URL}" >> $GITHUB_ENV
-        echo "AUTH_TOKEN=${AUTH_TOKEN}" >> $GITHUB_ENV
-        echo "KEY=${KEY}" >> $GITHUB_ENV
-        
-    - name: 上传文件到文叔叔
-      env:
-        FILENAME: ${{ env.FILENAME }}
-        UPLOAD_URL: ${{ env.UPLOAD_URL }}
-        AUTH_TOKEN: ${{ env.AUTH_TOKEN }}
-        KEY: ${{ env.KEY }}
-      run: |
-        echo "正在上传文件: ${FILENAME}"
-        
-        # 使用multipart/form-data上传
-        RESPONSE=$(curl -s -X POST "${UPLOAD_URL}" \
-          -F "file=@${FILENAME}" \
-          -F "token=${AUTH_TOKEN}" \
-          -F "key=${KEY}")
-        
-        echo "上传响应: ${RESPONSE}"
-        
-        # 提取下载链接
-        DOWNLOAD_URL=$(echo "${RESPONSE}" | jq -r '.data.url')
-        if [ "${DOWNLOAD_URL}" != "null" ]; then
-          echo "文件上传成功!"
-          echo "下载链接: ${DOWNLOAD_URL}"
-          echo "DOWNLOAD_URL=${DOWNLOAD_URL}" >> $GITHUB_ENV
-        else
-          echo "文件上传失败"
-          exit 1
-        fi
-        
-    - name: 输出结果
-      run: |
-        echo "🎉 文件上传完成！"
-        echo "📎 下载链接: ${{ env.DOWNLOAD_URL }}"
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install WeTransferTool requests
+
+      - name: Download file from URL
+        env:
+          FILE_URL: ${{ github.event.inputs.file_url }}
+        run: |
+          # 从URL中提取文件名，或自定义一个
+          FILENAME="downloaded_file"
+          wget -O "$FILENAME" "$FILE_URL"
+          echo "FILE_PATH=$FILENAME" >> $GITHUB_ENV
+
+      - name: Upload to WeTransfer using Python
+        run: |
+          python -c "
+          from WeTransferTool import We
+          import os
+          wet = We()
+          # 上传文件，可自定义消息
+          metadata = wet.upload(os.environ['FILE_PATH'], 'My File', 'Uploaded via GitHub Actions')
+          print('Download Link:', metadata.get('shortened_url'))
+          print('File expires at:', metadata.get('expires_at'))
+          "
