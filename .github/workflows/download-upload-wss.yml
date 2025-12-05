@@ -1,5 +1,5 @@
 
-name: download-net-file
+name: Upload File to Wenshushu
 
 on:
   repository_dispatch:
