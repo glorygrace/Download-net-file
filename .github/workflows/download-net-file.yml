@@ -89,7 +89,7 @@ jobs:
         
     - name: Upload firmware to WenShuShu
       id: WenShuShu
-      # if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       # working-directory: /workdir
       run: |
         cd download
