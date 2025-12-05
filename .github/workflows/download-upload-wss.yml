@@ -1,138 +1,94 @@
-name: Upload File to Wenshushu
+name: Upload to Wenshushu
 
 on:
-  repository_dispatch:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发
     inputs:
       file_url:
-        description: '文件地址'
+        description: '要上传的文件URL'
         required: true
-
-env:
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: true
-  UPLOAD_GOFILE: false
-  UPLOAD_WENSHUSHU: true
-  UPLOAD_RELEASE: false
-  TZ: Asia/Shanghai
+        type: string
+      file_name:
+        description: '保存的文件名（可选）'
+        required: false
+        type: string
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
-
+  upload-to-wenshushu:
+    runs-on: ubuntu-latest
+    
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-
-    - name: Initialization environment
+    - name: 下载文件
+      run: |
+        # 从输入的URL下载文件
+        if [ -z "${{ github.event.inputs.file_name }}" ]; then
+          FILENAME=$(basename "${{ github.event.inputs.file_url }}")
+        else
+          FILENAME="${{ github.event.inputs.file_name }}"
+        fi
+        echo "下载文件: ${{ github.event.inputs.file_url }}"
+        curl -L -o "${FILENAME}" "${{ github.event.inputs.file_url }}"
+        echo "文件已保存为: ${FILENAME}"
+        
+        # 检查文件大小
+        FILESIZE=$(stat -f%z "${FILENAME}" 2>/dev/null || stat -c%s "${FILENAME}")
+        echo "文件大小: ${FILESIZE} bytes"
+        
+        # 保存文件名到环境变量
+        echo "FILENAME=${FILENAME}" >> $GITHUB_ENV
+        
+    - name: 获取文叔叔上传令牌
       env:
-        DEBIAN_FRONTEND: noninteractive
+        WENSHUSHU_TOKEN: ${{ secrets.WENSHUSHU_TOKEN }}
       run: |
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
-
-    - name: Make download directory
+        # 文叔叔API获取上传令牌
+        RESPONSE=$(curl -s -X POST "https://www.wenshushu.cn/ap/u/upload/token" \
+          -H "Content-Type: application/json" \
+          -d "{\"token\":\"${WENSHUSHU_TOKEN}\",\"channel\":\"open_platform\"}")
+        
+        echo "API响应: ${RESPONSE}"
+        
+        # 提取上传URL和参数
+        UPLOAD_URL=$(echo "${RESPONSE}" | jq -r '.data.uptoken.upurl')
+        AUTH_TOKEN=$(echo "${RESPONSE}" | jq -r '.data.uptoken.auth')
+        KEY=$(echo "${RESPONSE}" | jq -r '.data.uptoken.key')
+        
+        echo "上传URL: ${UPLOAD_URL}"
+        echo "上传密钥: ${KEY}"
+        
+        # 保存到环境变量
+        echo "UPLOAD_URL=${UPLOAD_URL}" >> $GITHUB_ENV
+        echo "AUTH_TOKEN=${AUTH_TOKEN}" >> $GITHUB_ENV
+        echo "KEY=${KEY}" >> $GITHUB_ENV
+        
+    - name: 上传文件到文叔叔
+      env:
+        FILENAME: ${{ env.FILENAME }}
+        UPLOAD_URL: ${{ env.UPLOAD_URL }}
+        AUTH_TOKEN: ${{ env.AUTH_TOKEN }}
+        KEY: ${{ env.KEY }}
       run: |
-        mkdir -p /workdir/download
-        ln -sf /workdir/download $GITHUB_WORKSPACE/download
-
-    - name: Download files
-      id: download
-      run: |
-        cd /workdir/download
-        file_url="${{ github.event.inputs.file_url }}"
-        # 添加文件名提取和验证
-        filename=$(basename "$file_url")
-        echo "下载文件: $filename"
-        curl -L -O -f "$file_url" || curl -L -o "$filename" "$file_url"
-        # 检查文件是否下载成功
-        if [ -f "$filename" ]; then
-          echo "status=success" >> $GITHUB_OUTPUT
-          echo "filename=$filename" >> $GITHUB_OUTPUT
+        echo "正在上传文件: ${FILENAME}"
+        
+        # 使用multipart/form-data上传
+        RESPONSE=$(curl -s -X POST "${UPLOAD_URL}" \
+          -F "file=@${FILENAME}" \
+          -F "token=${AUTH_TOKEN}" \
+          -F "key=${KEY}")
+        
+        echo "上传响应: ${RESPONSE}"
+        
+        # 提取下载链接
+        DOWNLOAD_URL=$(echo "${RESPONSE}" | jq -r '.data.url')
+        if [ "${DOWNLOAD_URL}" != "null" ]; then
+          echo "文件上传成功!"
+          echo "下载链接: ${DOWNLOAD_URL}"
+          echo "DOWNLOAD_URL=${DOWNLOAD_URL}" >> $GITHUB_ENV
         else
-          echo "status=failed" >> $GITHUB_OUTPUT
-          echo "错误：文件下载失败"
+          echo "文件上传失败"
           exit 1
         fi
-
-    - name: Organize files
-      id: organize
-      if: steps.download.outputs.status == 'success' && !cancelled()
+        
+    - name: 输出结果
       run: |
-        cd /workdir/download
-        # 检查目录中是否有文件
-        if [ -z "$(ls -A)" ]; then
-          echo "错误：下载目录为空"
-          exit 1
-        fi
-        t=file_$(date +%Y%m%d%H%M%S).tar.gz
-        echo "FILE_NAME=$t" >> $GITHUB_ENV
-        tar -zcvf "$t" *
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "压缩文件: $t 创建成功"
-
-    - name: Upload firmware to WeTransfer
-      id: wetransfer
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
-      run: |
-        cd /workdir/download
-        # 安装必要的工具
-        sudo apt-get update && sudo apt-get install -y curl
-        curl -fsSL https://git.io/file-transfer | sh
-        ./transfer wet -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee wetransfer.log
-        # 提取URL
-        url=$(grep -o 'https://[^ ]*' wetransfer.log | head -1 || true)
-        if [ -n "$url" ]; then
-          echo "url=$url" >> $GITHUB_OUTPUT
-          echo "::notice::WeTransfer上传成功: $url"
-        else
-          echo "::error::WeTransfer上传失败，请检查日志"
-          exit 1
-        fi
-
-    - name: Upload firmware to GoFile
-      id: gofile
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_GOFILE == 'true' && !cancelled()
-      run: |
-        cd /workdir/download
-        curl -fsSL https://git.io/file-transfer | sh
-        ./transfer gof -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee gofile.log
-        url=$(grep -o 'https://[^ ]*' gofile.log | head -1 || true)
-        if [ -n "$url" ]; then
-          echo "url=$url" >> $GITHUB_OUTPUT
-          echo "::notice::GoFile上传成功: $url"
-        else
-          echo "::error::GoFile上传失败，请检查日志"
-          exit 1
-        fi
-
-    - name: Upload firmware to WenShuShu
-      id: wenshushu
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
-      run: |
-        cd /workdir/download
-        curl -fsSL https://git.io/file-transfer | sh
-        ./transfer wss -s -p 16 --no-progress "${{ env.FILE_NAME }}" 2>&1 | tee wenshushu.log
-        url=$(grep -o 'https://[^ ]*' wenshushu.log | head -1 || true)
-        if [ -n "$url" ]; then
-          echo "url=$url" >> $GITHUB_OUTPUT
-          echo "::notice::文叔叔上传成功: $url"
-        else
-          echo "::error::文叔叔上传失败，请检查日志"
-          exit 1
-        fi
-
-    - name: Show upload results
-      if: always()
-      run: |
-        echo "=== 上传结果 ==="
-        echo "压缩文件: ${{ env.FILE_NAME }}"
-        if [ "${{ steps.wetransfer.outputs.url }}" != "" ]; then
-          echo "WeTransfer: ${{ steps.wetransfer.outputs.url }}"
-        fi
-        if [ "${{ steps.gofile.outputs.url }}" != "" ]; then
-          echo "GoFile: ${{ steps.gofile.outputs.url }}"
-        fi
-        if [ "${{ steps.wenshushu.outputs.url }}" != "" ]; then
-          echo "文叔叔: ${{ steps.wenshushu.outputs.url }}"
-        fi
+        echo "🎉 文件上传完成！"
+        echo "📎 下载链接: ${{ env.DOWNLOAD_URL }}"
