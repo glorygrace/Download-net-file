@@ -66,7 +66,7 @@ jobs:
                
     - name: Upload firmware to 文叔叔 wenshushu
       id: upload
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
       run: |
         cd download
         FILE=${{ env.FILE_NAME }}
