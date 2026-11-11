@@ -76,9 +76,11 @@ jobs:
         ls -la
         FILE=${{ env.FILE_NAME }}
         echo "Upload file: $FILE"
-        RESP=$(curl -s -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@${FILE}" https://litter.catbox.moe)
+        # 重点：目标地址是 api.php，不是根域名
+        RESP=$(curl -s -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@${FILE}" https://litterbox.catbox.moe/resources/internals/api.php)
         echo "url=${RESP}" >> $GITHUB_OUTPUT
         echo "✅ Download URL: ${RESP}"
+
 
             
     - name: Upload firmware to GoFile
