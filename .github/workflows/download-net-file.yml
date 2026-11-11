@@ -11,10 +11,7 @@ on:
       
 
 env:
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: true
-  UPLOAD_GOFILE: false
-  UPLOAD_WENSHUSHU: false
+  UPLOAD_WENSHUSHU: true
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
@@ -67,44 +64,23 @@ jobs:
         # echo "::set-output name=status::success"
         echo "status=success" >> $GITHUB_OUTPUT
                
-    - name: Upload firmware to Litterbox
+    - name: Upload firmware to 文叔叔 wenshushu
       id: upload
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
         cd download
-        pwd
-        ls -la
         FILE=${{ env.FILE_NAME }}
         echo "Upload file: $FILE"
-        # 重点：目标地址是 api.php，不是根域名
-        RESP=$(curl -s -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@${FILE}" https://litterbox.catbox.moe/resources/internals/api.php)
-        echo "url=${RESP}" >> $GITHUB_OUTPUT
-        echo "✅ Download URL: ${RESP}"
+        # 上传，7天过期
+        RESP=$(curl -s -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
+          -F "file=@${FILE}" \
+          -F "expire=7d" \
+          shturl.cc/vHA5Je1M1OTbd2jXLYuVvs
+        echo "Raw response: $RESP"
+        # 提取url
+        LINK=$(echo "$RESP" | jq -r '.url')
+        echo "url=${LINK}" >> $GITHUB_OUTPUT
+        echo "✅ 文叔叔下载链接: ${LINK}"
 
-
-            
-    - name: Upload firmware to GoFile
-      id: Gofile
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_GOFILE == 'true' && !cancelled()
-      run: |
-        # cd /workdir
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer gof -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee gofile.log
-        echo "::warning file=gofile.io::$(cat gofile.log | grep https)"      
-        echo "url=$(cat gofile.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        
-    - name: Upload firmware to WenShuShu
-      id: WenShuShu
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
-      # working-directory: /workdir
-      run: |
-        pwd
-        cd download
-        pwd
-        ls
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer wss -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wenshushu.log
-        # echo "::warning file=wenshushu.cn::$(cat wenshushu.log | grep https)" 
-        echo "::set-output name=url::$(cat wenshushu.log | grep https | cut -f3 -d" ")"
         
     
