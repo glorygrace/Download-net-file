@@ -71,16 +71,15 @@ jobs:
         cd download
         FILE=${{ env.FILE_NAME }}
         echo "Upload file: $FILE"
-        # 上传，7天过期
         RESP=$(curl -s -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
           -F "file=@${FILE}" \
           -F "expire=7d" \
-          shturl.cc/vHA5Je1M1OTbd2jXLYuVvs
+          https://shturl.cc/vHA5Je1M1OTbd2jXLYuVvs)
         echo "Raw response: $RESP"
-        # 提取url
-        LINK=$(echo "$RESP" | jq -r '.url')
+        LINK=$(echo "$RESP" | jq -r '.url // "null"')
         echo "url=${LINK}" >> $GITHUB_OUTPUT
         echo "✅ 文叔叔下载链接: ${LINK}"
+
 
         
     
