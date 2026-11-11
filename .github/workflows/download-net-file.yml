@@ -11,7 +11,8 @@ on:
       
 
 env:
-  UPLOAD_WENSHUSHU: true
+  UPLOAD_WENSHUSHU: false
+  UPLOAD_COWTRANSFER: true
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
@@ -64,21 +65,26 @@ jobs:
         # echo "::set-output name=status::success"
         echo "status=success" >> $GITHUB_OUTPUT
                
-    - name: Upload firmware to 文叔叔 wenshushu
+    - name: Upload firmware to CowTransfer 奶牛快传
       id: upload
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WENSHUSHU == 'true' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_COWTRANSFER == 'true' && !cancelled()
       run: |
         cd download
         FILE=${{ env.FILE_NAME }}
         echo "Upload file: $FILE"
-        RESP=$(curl -s -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
-          -F "file=@${FILE}" \
-          -F "expire=7d" \
-          https://shturl.cc/vHA5Je1M1OTbd2jXLYuVvs)
-        echo "Raw response: $RESP"
-        LINK=$(echo "$RESP" | jq -r '.url // "null"')
-        echo "url=${LINK}" >> $GITHUB_OUTPUT
-        echo "✅ 文叔叔下载链接: ${LINK}"
+        # 第一步：获取上传token和上传地址
+        TOKEN_RESP=$(curl -s -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" https://cowtransfer.com/api/upload/init)
+        UPLOAD_URL=$(echo "$TOKEN_RESP" | jq -r '.uploadUrl')
+        TRANSFER_ID=$(echo "$TOKEN_RESP" | jq -r '.transferId')
+        echo "UPLOAD_URL: $UPLOAD_URL"
+        echo "TRANSFER_ID: $TRANSFER_ID"
+        # 第二步：上传文件
+        curl -s -X POST -F "file=@${FILE}" "$UPLOAD_URL"
+        # 拼接下载链接
+        DOWNLOAD_URL="https://cowtransfer.com/s/${TRANSFER_ID}"
+        echo "url=${DOWNLOAD_URL}" >> $GITHUB_OUTPUT
+        echo "✅ 奶牛快传链接: ${DOWNLOAD_URL}"
+
 
 
         
