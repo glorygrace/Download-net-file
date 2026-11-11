@@ -14,7 +14,7 @@ env:
   UPLOAD_COWTRANSFER: false
   UPLOAD_WETRANSFER: true
   UPLOAD_GOFILE: false
-  UPLOAD_WENSHUSHU: true
+  UPLOAD_WENSHUSHU: false
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
@@ -67,20 +67,13 @@ jobs:
         # echo "::set-output name=status::success"
         echo "status=success" >> $GITHUB_OUTPUT
                
-    - name: Upload firmware to WeTransfer
-      id: wetransfer
-      if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
+    - name: Upload to pixeldrain
+      id: upload
+      if: steps.organize.outputs.status == 'success' && !cancelled()
       run: |
-        # cd /workdir
-        pwd
         cd download
-        pwd
-        ls
-        curl -fsSL git.io/file-transfer | sh
-        ./transfer wet -s -p 16 --no-progress ${{ env.FILE_NAME }} | tee wetransfer.log
-        # echo "::warning file=wetransfer.com::$(cat wetransfer.log | grep https)"      
-        echo "url=$(cat wetransfer.log | grep https | cut -f3 -d" ")" >> $GITHUB_OUTPUT
-        # echo "::set-output name=url::$(cat wetransfer.log | grep https | cut -f3 -d" ")"
+        FILE=${{ env.FILE_NAME }}
+        curl -# -X POST -F "file=@${FILE}" https://pixeldrain.com/api/file
             
     - name: Upload firmware to GoFile
       id: Gofile
