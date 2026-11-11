@@ -13,6 +13,7 @@ on:
 env:
   UPLOAD_WENSHUSHU: false
   UPLOAD_COWTRANSFER: true
+  UPLOAD_GOFILE: true
   UPLOAD_RELEASE: false
   TZ: Asia/Shanghai
 
@@ -65,15 +66,20 @@ jobs:
         # echo "::set-output name=status::success"
         echo "status=success" >> $GITHUB_OUTPUT
                
-    - name: Upload to 0x0.st
+    - name: Upload firmware to GoFile
       id: upload
-      if: steps.organize.outputs.status == 'success' && !cancelled()
+      if: steps.organize.outputs.status == 'success' && env.UPLOAD_GOFILE == 'true' && !cancelled()
       run: |
         cd download
         FILE=${{ env.FILE_NAME }}
-        RESP=$(curl -s -F "file=@${FILE}" https://0x0.st)
-        echo "url=${RESP}" >> $GITHUB_OUTPUT
-        echo "✅ 0x0.st URL: ${RESP}"
+        echo "Upload file: $FILE"
+        RESP=$(curl -s -F "file=@${FILE}" https://gofile.io/api/upload)
+        echo "Raw response: $RESP"
+        # 提取下载链接
+        LINK=$(echo "$RESP" | jq -r '.data.downloadPage')
+        echo "url=${LINK}" >> $GITHUB_OUTPUT
+        echo "✅ GoFile 下载链接: ${LINK}"
+
 
 
         
