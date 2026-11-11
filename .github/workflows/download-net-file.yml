@@ -72,11 +72,14 @@ jobs:
       if: steps.organize.outputs.status == 'success' && env.UPLOAD_WETRANSFER == 'true' && !cancelled()
       run: |
         cd download
+        pwd
+        ls -la
         FILE=${{ env.FILE_NAME }}
-        # time可选：1h / 12h / 24h / 72h
+        echo "Upload file: $FILE"
         RESP=$(curl -s -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@${FILE}" https://litter.catbox.moe)
         echo "url=${RESP}" >> $GITHUB_OUTPUT
-        echo "Upload link: ${RESP}"
+        echo "✅ Download URL: ${RESP}"
+
             
     - name: Upload firmware to GoFile
       id: Gofile
